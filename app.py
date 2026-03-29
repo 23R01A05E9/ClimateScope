@@ -7,13 +7,35 @@ import os
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics.pairwise import cosine_similarity
 
-# ---------------- PAGE CONFIG ---------------- #
+# ---------------- CONFIG ---------------- #
 st.set_page_config(page_title="ClimateScope", layout="wide")
 
 USERS_FILE = "users.csv"
 DATA_FILE = "data/climate_data.csv"
 
-# ---------------- AUTH UTILS ---------------- #
+# ---------------- CACHE ---------------- #
+@st.cache_data
+def load_and_clean_data():
+    if not os.path.exists(DATA_FILE):
+        st.error("Climate dataset not found.")
+        st.stop()
+
+    df = pd.read_csv(DATA_FILE)
+    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
+
+    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+    df = df.dropna(subset=["datetime"])
+
+    df["year"] = df["datetime"].dt.year
+    df["month"] = df["datetime"].dt.month
+
+    numeric_cols = ["temperature_celsius", "precip_mm", "humidity", "wind_kph"]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    return df.dropna()
+
+# ---------------- AUTH ---------------- #
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -37,27 +59,26 @@ def authenticate(username, password):
         (users["password"] == hash_password(password))
     ].empty
 
-
 # ---------------- SESSION ---------------- #
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
-
 # ---------------- LOGIN PAGE ---------------- #
 def login_page():
-    st.title("🌍 ClimateScope – Visualizing Global Weather Trends")
+    st.title("🌍 ClimateScope – Interactive Climate Dashboard")
 
     tab1, tab2 = st.tabs(["🔐 Login", "📝 Register"])
 
     with tab1:
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
+
         if st.button("Login"):
             if authenticate(username, password):
                 st.session_state.logged_in = True
                 st.rerun()
             else:
-                st.error("Invalid username or password")
+                st.error("Invalid credentials")
 
     with tab2:
         new_user = st.text_input("New Username")
@@ -65,66 +86,18 @@ def login_page():
 
         if st.button("Register"):
             if save_user(new_user, new_pass):
-                st.success("Registration successful! Please login.")
+                st.success("Registered successfully!")
             else:
-                st.error("Username already exists")
-
-
-# ---------------- DATA CLEANING ---------------- #
-def load_and_clean_data():
-
-    if not os.path.exists(DATA_FILE):
-        st.error("Climate dataset not found.")
-        st.stop()
-
-    df = pd.read_csv(DATA_FILE)
-
-    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
-
-    if "datetime" not in df.columns:
-        st.error("❌ 'datetime' column not found.")
-        st.stop()
-
-    df = df.dropna(how="all")
-
-    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-    df = df.dropna(subset=["datetime"])
-
-    df["year"] = df["datetime"].dt.year
-    df["month"] = df["datetime"].dt.month
-
-    numeric_cols = ["temperature_celsius", "precip_mm", "humidity", "wind_kph"]
-
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    df = df.dropna()
-
-    return df
-
+                st.error("User already exists")
 
 # ---------------- DASHBOARD ---------------- #
 def dashboard():
 
     st.sidebar.title("🌡 ClimateScope")
-    st.write("Milestone 3 Version")
 
     menu = st.sidebar.radio(
         "Navigation",
-        [
-            "Overview",
-            "Statistical Analysis",
-            "Extreme Events",
-            "Line & Distribution Charts",
-            "Correlation Heatmap",
-            "Choropleth Map",
-            "Seasonal Heatmap",
-            "Wind Analysis",
-            "Country Similarity",
-            "Climate Ranking",
-            "Anomaly Visualization"
-        ]
+        ["Overview", "Interactive Charts", "Choropleth Map", "Advanced Insights"]
     )
 
     if st.sidebar.button("Logout"):
@@ -133,248 +106,152 @@ def dashboard():
 
     df = load_and_clean_data()
 
-    # ---------------- GLOBAL FILTERS ---------------- #
-    st.sidebar.subheader("Filters")
+    # ---------------- FILTERS ---------------- #
+    st.sidebar.subheader("🎛 Filters")
 
     countries = st.sidebar.multiselect(
-        "Select Countries",
+        "🌍 Countries",
         df["country"].unique(),
         default=df["country"].unique()[:5]
     )
 
-    if countries:
-        df = df[df["country"].isin(countries)]
-
-    min_year = int(df["year"].min())
-    max_year = int(df["year"].max())
-
     year_range = st.sidebar.slider(
-        "Select Year Range",
-        min_year,
-        max_year,
-        (min_year, max_year)
+        "📅 Year Range",
+        int(df["year"].min()),
+        int(df["year"].max()),
+        (int(df["year"].min()), int(df["year"].max()))
+    )
+
+    temp_range = st.sidebar.slider(
+        "🌡 Temperature Range",
+        float(df["temperature_celsius"].min()),
+        float(df["temperature_celsius"].max()),
+        (float(df["temperature_celsius"].min()), float(df["temperature_celsius"].max()))
     )
 
     df = df[
-        (df["year"] >= year_range[0]) &
-        (df["year"] <= year_range[1])
+        (df["country"].isin(countries)) &
+        (df["year"].between(*year_range)) &
+        (df["temperature_celsius"].between(*temp_range))
     ]
 
-    # ---------------- DASHBOARD METRICS ---------------- #
-    col1, col2, col3 = st.columns(3)
+    # ---------------- METRICS ---------------- #
+    st.title("📊 Climate Dashboard")
 
-    col1.metric("Avg Temperature", round(df["temperature_celsius"].mean(), 2))
-    col2.metric("Avg Humidity", round(df["humidity"].mean(), 2))
-    col3.metric("Avg Wind Speed", round(df["wind_kph"].mean(), 2))
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric("🌡 Avg Temp", round(df["temperature_celsius"].mean(), 2))
+    col2.metric("💧 Humidity", round(df["humidity"].mean(), 2))
+    col3.metric("🌧 Rainfall", round(df["precip_mm"].mean(), 2))
+    col4.metric("💨 Wind", round(df["wind_kph"].mean(), 2))
 
     # ---------------- OVERVIEW ---------------- #
     if menu == "Overview":
 
-        st.title("📊 Climate Overview")
+        st.subheader("📌 Quick Insights")
 
-        st.subheader("🔍 Key Climate Insights")
+        with st.expander("🔍 Show Insights"):
+            st.write("🔥 Hottest Country:", df.groupby("country")["temperature_celsius"].mean().idxmax())
+            st.write("❄ Coldest Country:", df.groupby("country")["temperature_celsius"].mean().idxmin())
 
-        hottest_country = df.groupby("country")["temperature_celsius"].mean().idxmax()
-        coldest_country = df.groupby("country")["temperature_celsius"].mean().idxmin()
-        most_rain = df.groupby("country")["precip_mm"].mean().idxmax()
+        st.dataframe(df, use_container_width=True)
 
-        st.success(f"Hottest Country: {hottest_country}")
-        st.info(f"Coldest Country: {coldest_country}")
-        st.warning(f"Highest Rainfall Country: {most_rain}")
+    # ---------------- INTERACTIVE CHARTS ---------------- #
+    elif menu == "Interactive Charts":
 
-        st.subheader("Dataset Preview")
-        st.dataframe(df.head(50), use_container_width=True)
+        st.subheader("📊 Build Your Own Chart")
 
-        st.subheader("Statistical Summary")
-        st.dataframe(df.describe(), use_container_width=True)
+        chart_type = st.selectbox("Chart Type", ["Line", "Scatter", "Histogram", "Box"])
+        x_axis = st.selectbox("X-axis", df.columns)
+        y_axis = st.selectbox("Y-axis", df.select_dtypes(include=np.number).columns)
+        color = st.selectbox("Color By", ["country", "year", "month"])
 
-    # ---------------- STATISTICAL ANALYSIS ---------------- #
-    elif menu == "Statistical Analysis":
+        if chart_type == "Line":
+            fig = px.line(df, x=x_axis, y=y_axis, color=color)
 
-        st.title("📈 Statistical Analysis")
+        elif chart_type == "Scatter":
+            fig = px.scatter(df, x=x_axis, y=y_axis, color=color, size="humidity")
 
-        st.write("Skewness:", df["temperature_celsius"].skew())
+        elif chart_type == "Histogram":
+            fig = px.histogram(df, x=x_axis, color=color)
 
-        df["z_score"] = (
-            df["temperature_celsius"] - df["temperature_celsius"].mean()
-        ) / df["temperature_celsius"].std()
+        elif chart_type == "Box":
+            fig = px.box(df, x="country", y=y_axis, color="country")
 
-        st.subheader("Z-Score Anomalies")
-        st.dataframe(df[abs(df["z_score"]) > 3].head(20))
+        st.plotly_chart(fig, use_container_width=True)
 
-    # ---------------- EXTREME EVENTS ---------------- #
-    elif menu == "Extreme Events":
-
-        st.title("🔥 Extreme Temperature Events")
-
-        threshold = df["temperature_celsius"].mean() + df["temperature_celsius"].std()
-
-        extreme_df = df[df["temperature_celsius"] > threshold]
-
-        st.write("Threshold:", threshold)
-
-        st.dataframe(extreme_df.head(20))
-
-        extreme_count = extreme_df.groupby("country").size().reset_index(name="extreme_days")
-
-        st.plotly_chart(px.bar(extreme_count, x="country", y="extreme_days"), use_container_width=True)
-
-    # ---------------- LINE & DISTRIBUTION ---------------- #
-    elif menu == "Line & Distribution Charts":
-
-        st.title("📊 Climate Visualizations")
-
-        yearly_temp = df.groupby(["year", "country"])["temperature_celsius"].mean().reset_index()
-
-        st.plotly_chart(
-            px.line(yearly_temp, x="year", y="temperature_celsius", color="country"),
-            use_container_width=True
-        )
-
-        st.plotly_chart(px.histogram(df, x="temperature_celsius"), use_container_width=True)
-
-        st.plotly_chart(px.violin(df, x="country", y="temperature_celsius"), use_container_width=True)
-
-    # ---------------- CORRELATION HEATMAP ---------------- #
-    elif menu == "Correlation Heatmap":
-
-        st.title("📊 Correlation Heatmap")
-
-        corr = df[["temperature_celsius", "precip_mm", "humidity", "wind_kph"]].corr()
-
-        st.plotly_chart(px.imshow(corr, text_auto=True), use_container_width=True)
-
-    # ---------------- CHOROPLETH MAP ---------------- #
+    # ---------------- MAP ---------------- #
     elif menu == "Choropleth Map":
 
-        st.title("🌍 Global Temperature Choropleth Map")
+        st.subheader("🌍 Global Climate Map")
 
-        country_avg = df.groupby("country")["temperature_celsius"].mean().reset_index()
-
-        st.plotly_chart(
-            px.choropleth(
-                country_avg,
-                locations="country",
-                locationmode="country names",
-                color="temperature_celsius",
-                color_continuous_scale="RdYlBu_r"
-            ),
-            use_container_width=True
+        metric = st.selectbox(
+            "Select Metric",
+            ["temperature_celsius", "humidity", "precip_mm", "wind_kph"]
         )
 
-    # ---------------- SEASONAL HEATMAP ---------------- #
-    elif menu == "Seasonal Heatmap":
+        country_avg = df.groupby("country")[metric].mean().reset_index()
 
-        st.title("🌡 Seasonal Temperature Heatmap")
-
-        heat = df.groupby(["month", "country"])["temperature_celsius"].mean().reset_index()
-
-        fig = px.density_heatmap(
-            heat,
-            x="month",
-            y="country",
-            z="temperature_celsius",
-            color_continuous_scale="RdYlBu_r"
+        fig = px.choropleth(
+            country_avg,
+            locations="country",
+            locationmode="country names",
+            color=metric,
+            hover_name="country",
+            color_continuous_scale="Viridis"
         )
 
         st.plotly_chart(fig, use_container_width=True)
 
-    # ---------------- WIND ANALYSIS ---------------- #
-    elif menu == "Wind Analysis":
+    # ---------------- ADVANCED ---------------- #
+    elif menu == "Advanced Insights":
 
-        st.title("💨 Wind Speed Analysis")
+        tab1, tab2, tab3 = st.tabs(["📈 Trends", "🔥 Extremes", "🧠 Similarity"])
 
-        fig = px.box(df, x="country", y="wind_kph", color="country")
+        # Trends
+        with tab1:
+            yearly = df.groupby(["year", "country"])["temperature_celsius"].mean().reset_index()
+            st.plotly_chart(px.line(yearly, x="year", y="temperature_celsius", color="country"))
 
-        st.plotly_chart(fig, use_container_width=True)
+        # Extremes
+        with tab2:
+            threshold = st.slider(
+                "Extreme Temperature Threshold",
+                float(df["temperature_celsius"].min()),
+                float(df["temperature_celsius"].max()),
+                float(df["temperature_celsius"].mean())
+            )
 
-        fig2 = px.scatter(
-            df,
-            x="wind_kph",
-            y="temperature_celsius",
-            color="country"
-        )
+            extreme_df = df[df["temperature_celsius"] > threshold]
 
-        st.plotly_chart(fig2, use_container_width=True)
+            st.write("🔥 Extreme Events:", len(extreme_df))
+            st.plotly_chart(px.bar(extreme_df, x="country", y="temperature_celsius", color="country"))
 
-    # ---------------- COUNTRY SIMILARITY ---------------- #
-    elif menu == "Country Similarity":
+        # Similarity
+        with tab3:
+            country_features = df.groupby("country").mean(numeric_only=True)
 
-        st.title("🌍 Country Climate Similarity")
+            countries_list = country_features.index.tolist()
 
-        country_features = df.groupby("country").agg({
-            "temperature_celsius":"mean",
-            "precip_mm":"mean",
-            "humidity":"mean",
-            "wind_kph":"mean"
-        }).reset_index()
-
-        countries = country_features["country"].unique()
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            country1 = st.selectbox("Country 1", countries)
-
-        with col2:
-            country2 = st.selectbox("Country 2", countries, index=1)
-
-        if country1 != country2:
+            c1 = st.selectbox("Country 1", countries_list)
+            c2 = st.selectbox("Country 2", countries_list, index=1)
 
             scaler = StandardScaler()
+            scaled = scaler.fit_transform(country_features)
 
-            scaled_df = scaler.fit_transform(country_features.iloc[:,1:])
-
-            similarity = cosine_similarity(
-                [scaled_df[country_features[country_features["country"] == country1].index[0]]],
-                [scaled_df[country_features[country_features["country"] == country2].index[0]]]
+            sim = cosine_similarity(
+                [scaled[countries_list.index(c1)]],
+                [scaled[countries_list.index(c2)]]
             )[0][0]
 
-            st.success(f"Similarity: {round(similarity*100,2)}%")
+            st.success(f"🧠 Similarity Score: {round(sim*100,2)}%")
 
-    # ---------------- CLIMATE RANKING ---------------- #
-    elif menu == "Climate Ranking":
-
-        st.title("🏆 Climate Ranking")
-
-        country_features = df.groupby("country").agg({
-            "temperature_celsius":"mean",
-            "precip_mm":"mean",
-            "humidity":"mean",
-            "wind_kph":"mean"
-        }).reset_index()
-
-        country_features["score"] = (
-            country_features["temperature_celsius"]*0.4 +
-            country_features["precip_mm"]*0.3 +
-            country_features["humidity"]*0.2 +
-            country_features["wind_kph"]*0.1
-        )
-
-        st.dataframe(country_features.sort_values("score", ascending=False).head(10))
-
-    # ---------------- ANOMALY VISUALIZATION ---------------- #
-    elif menu == "Anomaly Visualization":
-
-        st.title("⚠ Climate Anomalies")
-
-        df["z_score"] = (
-            df["temperature_celsius"] - df["temperature_celsius"].mean()
-        ) / df["temperature_celsius"].std()
-
-        anomalies = df[abs(df["z_score"]) > 3]
-
-        st.dataframe(anomalies.head(20))
-
-        fig = px.scatter(
-            anomalies,
-            x="datetime",
-            y="temperature_celsius",
-            color="country"
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
-
+    # ---------------- DOWNLOAD ---------------- #
+    st.sidebar.download_button(
+        "📥 Download Filtered Data",
+        df.to_csv(index=False),
+        file_name="filtered_climate_data.csv"
+    )
 
 # ---------------- MAIN ---------------- #
 if st.session_state.logged_in:
