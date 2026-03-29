@@ -166,6 +166,7 @@ def dashboard():
         use_container_width=True
     )
 # Milestone 4 update
+# Milestone 4 update - interactive dashboard
 # ---------------- MAIN ---------------- #
 if st.session_state.logged_in:
     dashboard()
